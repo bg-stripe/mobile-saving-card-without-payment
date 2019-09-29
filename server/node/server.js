@@ -35,7 +35,9 @@ app.get("/public-key", (req, res) => {
 });
 
 app.post("/create-setup-intent", async (req, res) => {
-  res.send(await stripe.setupIntents.create());
+  res.send(await stripe.setupIntents.create({
+    use_stripe_sdk: true
+  }));
 });
 
 // Webhook handler for asynchronous events.
