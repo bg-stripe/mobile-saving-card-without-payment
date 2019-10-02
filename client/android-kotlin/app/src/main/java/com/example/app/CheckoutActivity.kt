@@ -6,7 +6,9 @@ import java.lang.ref.WeakReference
 import android.app.Activity
 import android.content.Intent
 import android.os.Bundle
+import android.util.Log
 import android.widget.Button
+import android.widget.EditText
 import android.widget.Toast
 import androidx.appcompat.app.AlertDialog
 import androidx.appcompat.app.AppCompatActivity
@@ -19,9 +21,11 @@ import com.google.gson.GsonBuilder
 import org.json.JSONObject
 
 import com.stripe.android.ApiResultCallback
-import com.stripe.android.PaymentIntentResult
+import com.stripe.android.SetupIntentResult
 import com.stripe.android.Stripe
-import com.stripe.android.model.ConfirmPaymentIntentParams
+import com.stripe.android.model.ConfirmSetupIntentParams
+import com.stripe.android.model.PaymentMethod
+import com.stripe.android.model.PaymentMethodCreateParams
 import com.stripe.android.model.StripeIntent
 import com.stripe.android.view.CardInputWidget
 
@@ -39,8 +43,7 @@ class CheckoutActivity : AppCompatActivity() {
     // 10.0.2.2 is the Android emulator's alias to localhost
     private val backendUrl = "http://10.0.2.2:4242/"
     private val httpClient = OkHttpClient()
-    private lateinit var stripePublicKey: String
-    private lateinit var paymentIntentClientSecret: String
+    private lateinit var setupIntentClientSecret: String
     private lateinit var stripe: Stripe
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -50,19 +53,11 @@ class CheckoutActivity : AppCompatActivity() {
     }
 
     private fun loadPage() {
-        // Create a PaymentIntent by calling the sample server's /create-payment-intent endpoint.
+        // Create a SetupIntent by calling the sample server's /create-setup-intent endpoint.
         val mediaType = "application/json; charset=utf-8".toMediaType()
-        val json = """
-            {
-                "currency":"usd",
-                "items": [
-                    {"id":"photo_subscription"}
-                ]
-            }
-            """
-        val body = json.toRequestBody(mediaType)
+        val body = "".toRequestBody(mediaType)
         val request = Request.Builder()
-            .url(backendUrl + "create-payment-intent")
+            .url(backendUrl + "create-setup-intent")
             .post(body)
             .build()
         httpClient.newCall(request)
@@ -80,15 +75,15 @@ class CheckoutActivity : AppCompatActivity() {
                         }
                     } else {
                         val responseData = response.body?.string()
-                        var json = JSONObject(responseData)
+                        val json = JSONObject(responseData)
 
-                        // The response from the server includes the Stripe public key and
-                        // PaymentIntent details.
-                        stripePublicKey = json.getString("publicKey")
-                        paymentIntentClientSecret = json.getString("clientSecret")
+                        // The response from the server includes the Stripe publishable key and
+                        // SetupIntent details.
+                        val stripePublishableKey = json.getString("publishableKey")
+                        setupIntentClientSecret = json.getString("clientSecret")
 
-                        // Use the public key from the server to initialize the Stripe instance.
-                        stripe = Stripe(applicationContext, stripePublicKey)
+                        // Use the publishable key from the server to initialize the Stripe instance.
+                        stripe = Stripe(applicationContext, stripePublishableKey)
                     }
                 }
             })
@@ -96,13 +91,25 @@ class CheckoutActivity : AppCompatActivity() {
         // Hook up the pay button to the card widget and stripe instance
         val payButton: Button = findViewById(R.id.payButton)
         payButton.setOnClickListener {
+            // Collect card details
             val cardInputWidget =
                 findViewById<CardInputWidget>(R.id.cardInputWidget)
-            val params = cardInputWidget.paymentMethodCreateParams
-            if (params != null) {
-                val confirmParams = ConfirmPaymentIntentParams
-                    .createWithPaymentMethodCreateParams(params, paymentIntentClientSecret)
-                stripe.confirmPayment(this, confirmParams)
+            val paymentMethodCard = cardInputWidget.paymentMethodCard
+
+            // Later, you will need to attach the PaymentMethod to the Customer it belongs to.
+            // This example collects the customer's email to know which customer the PaymentMethod belongs to, but your app might use an account id, session cookie, etc.
+            val emailInput = findViewById<EditText>(R.id.emailInput)
+            val billingDetails = PaymentMethod.BillingDetails.Builder()
+                .setEmail((emailInput.text ?: "").toString())
+                .build()
+
+            // Create SetupIntent confirm parameters with the above
+            if (paymentMethodCard != null) {
+                val paymentMethodParams = PaymentMethodCreateParams
+                    .create(paymentMethodCard, billingDetails, null)
+                val confirmParams = ConfirmSetupIntentParams
+                    .create(paymentMethodParams, setupIntentClientSecret)
+                stripe.confirmSetupIntent(this, confirmParams)
             }
         }
 
@@ -112,24 +119,26 @@ class CheckoutActivity : AppCompatActivity() {
         super.onActivityResult(requestCode, resultCode, data)
         val weakActivity = WeakReference<Activity>(this)
 
-        // Handle the result of stripe.confirmPayment
-        stripe.onPaymentResult(requestCode, data, object : ApiResultCallback<PaymentIntentResult> {
-            override fun onSuccess(result: PaymentIntentResult) {
-                val paymentIntent = result.intent
-                val status = paymentIntent.status
+        // Handle the result of stripe.confirmSetupIntent
+        stripe.onSetupResult(requestCode, data, object : ApiResultCallback<SetupIntentResult> {
+            override fun onSuccess(result: SetupIntentResult) {
+                val setupIntent = result.intent
+                val status = setupIntent.status
                 if (status == StripeIntent.Status.Succeeded) {
-                    // Payment completed successfully
+                    // Setup completed successfully
                     runOnUiThread {
                         if (weakActivity.get() != null) {
                             val activity = weakActivity.get()!!
                             val builder = AlertDialog.Builder(activity)
-                            builder.setTitle("Payment completed")
+                            builder.setTitle("Setup completed")
                             val gson = GsonBuilder().setPrettyPrinting().create()
-                            builder.setMessage(gson.toJson(paymentIntent))
+                            builder.setMessage(gson.toJson(setupIntent))
                             builder.setPositiveButton("Restart demo") { _, _ ->
                                 val cardInputWidget =
                                     findViewById<CardInputWidget>(R.id.cardInputWidget)
                                 cardInputWidget.clear()
+                                val emailInput = findViewById<EditText>(R.id.emailInput)
+                                emailInput.text = null
                                 loadPage()
                             }
                             val dialog = builder.create()
@@ -137,17 +146,19 @@ class CheckoutActivity : AppCompatActivity() {
                         }
                     }
                 } else if (status == StripeIntent.Status.RequiresPaymentMethod) {
-                    // Payment failed – allow retrying using a different payment method
+                    // Setup failed – allow retrying using a different payment method
                     runOnUiThread {
                         if (weakActivity.get() != null) {
                             val activity = weakActivity.get()!!
                             val builder = AlertDialog.Builder(activity)
-                            builder.setTitle("Payment failed")
-                            builder.setMessage(paymentIntent.lastPaymentError!!.message)
+                            builder.setTitle("Setup failed")
+                            builder.setMessage(setupIntent.lastSetupError!!.message)
                             builder.setPositiveButton("Ok") { _, _ ->
                                 val cardInputWidget =
                                     findViewById<CardInputWidget>(R.id.cardInputWidget)
                                 cardInputWidget.clear()
+                                val emailInput = findViewById<EditText>(R.id.emailInput)
+                                emailInput.text = null
                             }
                             val dialog = builder.create()
                             dialog.show()
@@ -157,7 +168,7 @@ class CheckoutActivity : AppCompatActivity() {
             }
 
             override fun onError(e: Exception) {
-                // Payment request failed – allow retrying using the same payment method
+                // Setup request failed – allow retrying using the same payment method
                 runOnUiThread {
                     if (weakActivity.get() != null) {
                         val activity = weakActivity.get()!!
