@@ -34,11 +34,17 @@ class CheckoutViewController: UIViewController {
         button.addTarget(self, action: #selector(pay), for: .touchUpInside)
         return button
     }()
+    lazy var emailTextField: UITextField = {
+        let emailTextField = UITextField()
+        emailTextField.placeholder = "Enter your email"
+        emailTextField.borderStyle = .roundedRect
+        return emailTextField
+    }()
 
     override func viewDidLoad() {
         super.viewDidLoad()
         view.backgroundColor = .white
-        let stackView = UIStackView(arrangedSubviews: [cardTextField, payButton])
+        let stackView = UIStackView(arrangedSubviews: [emailTextField, cardTextField, payButton])
         stackView.axis = .vertical
         stackView.spacing = 20
         stackView.translatesAutoresizingMaskIntoConstraints = false
@@ -57,6 +63,7 @@ class CheckoutViewController: UIViewController {
             if restartDemo {
                 alert.addAction(UIAlertAction(title: "Restart demo", style: .cancel) { _ in
                     self.cardTextField.clear()
+                    self.emailTextField.text = nil
                     self.startCheckout()
                 })
             }
@@ -97,7 +104,13 @@ class CheckoutViewController: UIViewController {
         }
         // Collect card details
         let cardParams = cardTextField.cardParams
-        let paymentMethodParams = STPPaymentMethodParams(card: cardParams, billingDetails: nil, metadata: nil)
+        
+        // Collect the customer's email to know which customer the PaymentMethod belongs to.
+        let billingDetails = STPPaymentMethodBillingDetails()
+        billingDetails.email = emailTextField.text
+        
+        // Create SetupIntent confirm parameters with the above
+        let paymentMethodParams = STPPaymentMethodParams(card: cardParams, billingDetails: billingDetails, metadata: nil)
         let setupIntentParams = STPSetupIntentConfirmParams(clientSecret: setupIntentClientSecret)
         setupIntentParams.paymentMethodParams = paymentMethodParams
 
