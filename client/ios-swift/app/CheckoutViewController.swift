@@ -48,7 +48,7 @@ class CheckoutViewController: UIViewController {
             view.rightAnchor.constraint(equalToSystemSpacingAfter: stackView.rightAnchor, multiplier: 2),
             stackView.topAnchor.constraint(equalToSystemSpacingBelow: view.topAnchor, multiplier: 2),
         ])
-        loadPage()
+        startCheckout()
     }
 
     func displayAlert(title: String, message: String, restartDemo: Bool = false) {
@@ -57,7 +57,7 @@ class CheckoutViewController: UIViewController {
             if restartDemo {
                 alert.addAction(UIAlertAction(title: "Restart demo", style: .cancel) { _ in
                     self.cardTextField.clear()
-                    self.loadPage()
+                    self.startCheckout()
                 })
             }
             else {
@@ -67,7 +67,7 @@ class CheckoutViewController: UIViewController {
         }
     }
 
-    func loadPage() {
+    func startCheckout() {
         // Create a SetupIntent by calling the sample server's /create-setup-intent endpoint.
         let url = URL(string: BackendUrl + "create-setup-intent")!
         var request = URLRequest(url: url)
