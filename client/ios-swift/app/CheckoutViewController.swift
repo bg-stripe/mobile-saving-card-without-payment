@@ -30,7 +30,7 @@ class CheckoutViewController: UIViewController {
         button.layer.cornerRadius = 5
         button.backgroundColor = .systemBlue
         button.titleLabel?.font = UIFont.systemFont(ofSize: 22)
-        button.setTitle("Pay", for: .normal)
+        button.setTitle("Save", for: .normal)
         button.addTarget(self, action: #selector(pay), for: .touchUpInside)
         return button
     }()
