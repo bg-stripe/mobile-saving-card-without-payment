@@ -12,6 +12,7 @@ import android.content.Intent;
 import android.os.Bundle;
 import android.view.View;
 import android.widget.Button;
+import android.widget.EditText;
 import android.widget.Toast;
 
 import androidx.annotation.NonNull;
@@ -31,11 +32,12 @@ import com.google.gson.GsonBuilder;
 import com.google.gson.reflect.TypeToken;
 
 import com.stripe.android.ApiResultCallback;
-import com.stripe.android.PaymentIntentResult;
+import com.stripe.android.SetupIntentResult;
 import com.stripe.android.Stripe;
-import com.stripe.android.model.ConfirmPaymentIntentParams;
-import com.stripe.android.model.PaymentIntent;
+import com.stripe.android.model.ConfirmSetupIntentParams;
+import com.stripe.android.model.PaymentMethod;
 import com.stripe.android.model.PaymentMethodCreateParams;
+import com.stripe.android.model.SetupIntent;
 import com.stripe.android.view.CardInputWidget;
 
 
@@ -51,8 +53,7 @@ public class CheckoutActivity extends AppCompatActivity {
     // 10.0.2.2 is the Android emulator's alias to localhost
     private String backendUrl = "http://10.0.2.2:4242/";
     private OkHttpClient httpClient = new OkHttpClient();
-    private String stripePublicKey;
-    private String paymentIntentClientSecret;
+    private String setupIntentClientSecret;
     private Stripe stripe;
 
     @Override
@@ -63,17 +64,11 @@ public class CheckoutActivity extends AppCompatActivity {
     }
 
     private void loadPage() {
-        // Create a PaymentIntent by calling the sample server's /create-payment-intent endpoint.
+        // Create a SetupIntent by calling the sample server's /create-setup-intent endpoint.
         MediaType mediaType = MediaType.get("application/json; charset=utf-8");
-        String json = "{"
-                + "\"currency\":\"usd\","
-                + "\"items\":["
-                + "{\"id\":\"photo_subscription\"}"
-                + "]"
-                + "}";
-        RequestBody body = RequestBody.create(json, mediaType);
+        RequestBody body = RequestBody.create("", mediaType);
         Request request = new Request.Builder()
-                .url(backendUrl + "create-payment-intent")
+                .url(backendUrl + "create-setup-intent")
                 .post(body)
                 .build();
         httpClient.newCall(request)
@@ -98,13 +93,12 @@ public class CheckoutActivity extends AppCompatActivity {
                             Type type = new TypeToken<Map<String, String>>(){}.getType();
                             Map<String, String> responseMap = gson.fromJson(response.body().string(), type);
 
-                            // The response from the server includes the Stripe public key and
-                            // PaymentIntent details.
-                            stripePublicKey = responseMap.get("publicKey");
-                            paymentIntentClientSecret = responseMap.get("clientSecret");
+                            // The response from the server includes the Stripe publishable key and
+                            // SetupIntent details.
+                            setupIntentClientSecret = responseMap.get("clientSecret");
 
                             // Use the key from the server to initialize the Stripe instance.
-                            stripe = new Stripe(getApplicationContext(), stripePublicKey);
+                            stripe = new Stripe(getApplicationContext(), responseMap.get("publishableKey"));
                         }
                     }
                 });
@@ -112,12 +106,23 @@ public class CheckoutActivity extends AppCompatActivity {
         // Hook up the pay button to the card widget and stripe instance
         Button payButton = findViewById(R.id.payButton);
         payButton.setOnClickListener((View view) -> {
+            // Collect card details
             CardInputWidget cardInputWidget = findViewById(R.id.cardInputWidget);
-            PaymentMethodCreateParams params = cardInputWidget.getPaymentMethodCreateParams();
-            if (params != null) {
-                ConfirmPaymentIntentParams confirmParams = ConfirmPaymentIntentParams
-                        .createWithPaymentMethodCreateParams(params, paymentIntentClientSecret);
-                stripe.confirmPayment(this, confirmParams);
+            PaymentMethodCreateParams.Card card = cardInputWidget.getPaymentMethodCard();
+
+            // Later, you will need to attach the PaymentMethod to the Customer it belongs to.
+            // This example collects the customer's email to know which customer the PaymentMethod belongs to, but your app might use an account id, session cookie, etc.
+            EditText emailInput = findViewById(R.id.emailInput);
+            PaymentMethod.BillingDetails billingDetails = (new PaymentMethod.BillingDetails.Builder())
+                    .setEmail(emailInput.getText().toString())
+                    .build();
+            if (card != null) {
+                // Create SetupIntent confirm parameters with the above
+                PaymentMethodCreateParams paymentMethodParams = PaymentMethodCreateParams
+                        .create(card, billingDetails);
+                ConfirmSetupIntentParams confirmParams = ConfirmSetupIntentParams
+                        .create(paymentMethodParams, setupIntentClientSecret);
+                stripe.confirmSetupIntent(this, confirmParams);
             }
         });
     }
@@ -127,41 +132,45 @@ public class CheckoutActivity extends AppCompatActivity {
         super.onActivityResult(requestCode, resultCode, data);
         WeakReference<Activity> weakActivity = new WeakReference<>(this);
 
-        // Handle the result of stripe.confirmPayment
-        stripe.onPaymentResult(requestCode, data, new ApiResultCallback<PaymentIntentResult>() {
+        // Handle the result of stripe.confirmSetupIntent
+        stripe.onSetupResult(requestCode, data, new ApiResultCallback<SetupIntentResult>() {
             @Override
-            public void onSuccess(@NonNull PaymentIntentResult result) {
-                PaymentIntent paymentIntent = result.getIntent();
-                PaymentIntent.Status status = paymentIntent.getStatus();
-                if (status == PaymentIntent.Status.Succeeded) {
-                    // Payment completed successfully
+            public void onSuccess(@NonNull SetupIntentResult result) {
+                SetupIntent setupIntent = result.getIntent();
+                SetupIntent.Status status = setupIntent.getStatus();
+                if (status == SetupIntent.Status.Succeeded) {
+                    // Setup completed successfully
                     runOnUiThread(() -> {
                         if (weakActivity.get() != null) {
                             Activity activity = weakActivity.get();
                             AlertDialog.Builder builder = new AlertDialog.Builder(activity);
-                            builder.setTitle("Payment completed");
+                            builder.setTitle("Setup completed");
                             Gson gson = new GsonBuilder().setPrettyPrinting().create();
-                            builder.setMessage(gson.toJson(paymentIntent));
+                            builder.setMessage(gson.toJson(setupIntent));
                             builder.setPositiveButton("Restart demo", (DialogInterface dialog, int index) -> {
                                 CardInputWidget cardInputWidget = findViewById(R.id.cardInputWidget);
                                 cardInputWidget.clear();
+                                EditText emailInput = findViewById(R.id.emailInput);
+                                emailInput.setText(null);
                                 loadPage();
                             });
                             AlertDialog dialog = builder.create();
                             dialog.show();
                         }
                     });
-                } else if (status == PaymentIntent.Status.RequiresPaymentMethod) {
-                    // Payment failed – allow retrying using a different payment method
+                } else if (status == SetupIntent.Status.RequiresPaymentMethod) {
+                    // Setup failed – allow retrying using a different payment method
                     runOnUiThread(() -> {
                         if (weakActivity.get() != null) {
                             Activity activity = weakActivity.get();
                             AlertDialog.Builder builder = new AlertDialog.Builder(activity);
-                            builder.setTitle("Payment failed");
-                            builder.setMessage(paymentIntent.getLastPaymentError().message);
+                            builder.setTitle("Setup failed");
+                            builder.setMessage(setupIntent.getLastSetupError().message);
                             builder.setPositiveButton("Ok", (DialogInterface dialog, int index) -> {
                                 CardInputWidget cardInputWidget = findViewById(R.id.cardInputWidget);
                                 cardInputWidget.clear();
+                                EditText emailInput = findViewById(R.id.emailInput);
+                                emailInput.setText(null);
                             });
                             AlertDialog dialog = builder.create();
                             dialog.show();
@@ -172,7 +181,7 @@ public class CheckoutActivity extends AppCompatActivity {
 
             @Override
             public void onError(@NonNull Exception e) {
-                // Payment request failed – allow retrying using the same payment method
+                // Setup request failed – allow retrying using the same payment method
                 runOnUiThread(() -> {
                     if (weakActivity.get() != null) {
                         Activity activity = weakActivity.get();
