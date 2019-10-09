@@ -51,7 +51,7 @@ public class CheckoutActivity extends AppCompatActivity {
      * Android emulator.
      */
     // 10.0.2.2 is the Android emulator's alias to localhost
-    private String backendUrl = "http://10.0.2.2:4242/";
+    private static final String backendUrl = "http://10.0.2.2:4242/";
     private OkHttpClient httpClient = new OkHttpClient();
     private String setupIntentClientSecret;
     private Stripe stripe;
@@ -161,8 +161,8 @@ public class CheckoutActivity extends AppCompatActivity {
                 } else if (status == SetupIntent.Status.RequiresPaymentMethod) {
                     // Setup failed – allow retrying using a different payment method
                     runOnUiThread(() -> {
-                        if (weakActivity.get() != null) {
-                            Activity activity = weakActivity.get();
+                        Activity activity = weakActivity.get();
+                        if (activity != null) {
                             AlertDialog.Builder builder = new AlertDialog.Builder(activity);
                             builder.setTitle("Setup failed");
                             builder.setMessage(setupIntent.getLastSetupError().message);
@@ -183,8 +183,8 @@ public class CheckoutActivity extends AppCompatActivity {
             public void onError(@NonNull Exception e) {
                 // Setup request failed – allow retrying using the same payment method
                 runOnUiThread(() -> {
-                    if (weakActivity.get() != null) {
-                        Activity activity = weakActivity.get();
+                    Activity activity = weakActivity.get();
+                    if (activity != null) {
                         AlertDialog.Builder builder = new AlertDialog.Builder(activity);
                         builder.setMessage(e.toString());
                         builder.setPositiveButton("Ok", null);
